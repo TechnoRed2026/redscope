@@ -1,0 +1,14 @@
+# build
+redscope.exe
+redscope
+*.exe
+
+# Go
+/bin/
+/dist/
+coverage.out
+
+# editors
+.vscode/
+.idea/
+.DS_Store
