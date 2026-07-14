@@ -72,3 +72,25 @@ func TestSearchText(t *testing.T) {
 		}
 	}
 }
+
+func TestMatchEntryFilters(t *testing.T) {
+	e := netmon.Entry{PID: 42, Process: "curl", Protocol: "TCP", State: "ESTABLISHED"}
+	state := &screenState{protoFilter: "TCP", stateFilter: "established"}
+	if !state.matchEntry(e, "cur") {
+		t.Fatal("expected entry to match text/proto/state")
+	}
+	state.hideSystem = true
+	e.Process = "svchost.exe"
+	if state.matchEntry(e, "") {
+		t.Fatal("expected system process to be hidden")
+	}
+}
+
+func TestFormatBytes(t *testing.T) {
+	checks := map[uint64]string{999: "999 B", 1024: "1.0 KB", 10 * 1024: "10 KB", 1536 * 1024: "1.5 MB"}
+	for in, want := range checks {
+		if got := formatBytes(in); got != want {
+			t.Fatalf("formatBytes(%d) = %q, want %q", in, got, want)
+		}
+	}
+}

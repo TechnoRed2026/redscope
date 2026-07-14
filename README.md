@@ -13,6 +13,8 @@ It shows which local process is talking to which remote IP/host.
 - Reverse DNS hostname lookup
 - Connection state
 - Search/filter inside the TUI
+- Total RX/TX traffic rate
+- Quick filters for system processes, protocol, and connection state
 - Runs as a single binary
 
 ## Install
@@ -42,6 +44,11 @@ go build -o redscope.exe .\
 | Key | Action |
 | --- | --- |
 | `/` | Focus filter |
+| `s` | Hide/show system processes |
+| `p` | Cycle protocol filter: all/TCP/UDP |
+| `e` | Toggle ESTABLISHED filter |
+| `l` | Toggle LISTEN filter |
+| `t` | Toggle dark/light theme |
 | `Esc` | Clear filter / return to table |
 | `r` | Refresh now |
 | `q` | Quit |

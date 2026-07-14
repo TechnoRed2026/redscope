@@ -24,16 +24,26 @@ type Entry struct {
 	State      string
 }
 
+type Traffic struct {
+	RxBytes  uint64
+	TxBytes  uint64
+	RxPerSec uint64
+	TxPerSec uint64
+}
+
 type Snapshot struct {
 	Entries []Entry
+	Traffic Traffic
 	Warning string
 }
 
 type Monitor struct {
-	mu        sync.Mutex
-	names     map[int32]string
-	hosts     map[string]string
-	hostLimit int
+	mu            sync.Mutex
+	names         map[int32]string
+	hosts         map[string]string
+	hostLimit     int
+	lastTraffic   Traffic
+	lastTrafficAt time.Time
 }
 
 func NewMonitor() *Monitor {
@@ -89,7 +99,8 @@ func (m *Monitor) Snapshot(ctx context.Context) Snapshot {
 		return entries[i].Process < entries[j].Process
 	})
 
-	return Snapshot{Entries: entries}
+	traffic, warn := m.traffic(ctx)
+	return Snapshot{Entries: entries, Traffic: traffic, Warning: warn}
 }
 
 func (m *Monitor) processName(pid int32) string {
@@ -110,6 +121,32 @@ func (m *Monitor) processName(pid int32) string {
 	}
 	m.names[pid] = name
 	return name
+}
+
+func (m *Monitor) traffic(ctx context.Context) (Traffic, string) {
+	counters, err := psnet.IOCountersWithContext(ctx, false)
+	if err != nil || len(counters) == 0 {
+		return m.lastTraffic, "traffic: " + errText(err)
+	}
+
+	now := time.Now()
+	traffic := Traffic{RxBytes: counters[0].BytesRecv, TxBytes: counters[0].BytesSent}
+	if !m.lastTrafficAt.IsZero() {
+		seconds := now.Sub(m.lastTrafficAt).Seconds()
+		if seconds > 0 && traffic.RxBytes >= m.lastTraffic.RxBytes && traffic.TxBytes >= m.lastTraffic.TxBytes {
+			traffic.RxPerSec = uint64(float64(traffic.RxBytes-m.lastTraffic.RxBytes) / seconds)
+			traffic.TxPerSec = uint64(float64(traffic.TxBytes-m.lastTraffic.TxBytes) / seconds)
+		}
+	}
+	m.lastTraffic, m.lastTrafficAt = traffic, now
+	return traffic, ""
+}
+
+func errText(err error) string {
+	if err == nil {
+		return "unavailable"
+	}
+	return err.Error()
 }
 
 func reverse(parent context.Context, ip string) string {

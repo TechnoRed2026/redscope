@@ -150,6 +150,19 @@ func Run(ctx context.Context, monitor Monitor, refreshEvery time.Duration) error
 		case 't', 'T':
 			state.toggleTheme()
 			return nil
+		case 's', 'S':
+			state.hideSystem = !state.hideSystem
+			state.render(state.last)
+			return nil
+		case 'p', 'P':
+			state.cycleProto()
+			return nil
+		case 'e', 'E':
+			state.toggleState("established")
+			return nil
+		case 'l', 'L':
+			state.toggleState("listen")
+			return nil
 		}
 		if event.Key() == tcell.KeyEsc {
 			filter.SetText("")
@@ -178,15 +191,18 @@ func Run(ctx context.Context, monitor Monitor, refreshEvery time.Duration) error
 }
 
 type screenState struct {
-	table  *tview.Table
-	status *tview.TextView
-	title  *tview.TextView
-	help   *tview.TextView
-	filter *tview.InputField
-	root   *tview.Flex
-	last   netmon.Snapshot
-	theme  themeMode
-	busy   bool
+	table       *tview.Table
+	status      *tview.TextView
+	title       *tview.TextView
+	help        *tview.TextView
+	filter      *tview.InputField
+	root        *tview.Flex
+	last        netmon.Snapshot
+	theme       themeMode
+	protoFilter string
+	stateFilter string
+	hideSystem  bool
+	busy        bool
 }
 
 func hex(c tcell.Color) string { return fmt.Sprintf("#%06x", c.Hex()) }
@@ -200,7 +216,8 @@ func (s *screenState) applyTheme() {
 	s.status.SetBackgroundColor(cBg)
 	s.help.SetTextColor(cText)
 	s.help.SetBackgroundColor(cBg)
-	s.help.SetText(fmt.Sprintf(" [%s::b]/[-::-]filter  [%s::b]r[-] refresh  [%s::b]t[-] theme:%s  [%s::b]q[-] quit  [%s::b]Esc[-] clear", hex(cBrand), hex(cBrand), hex(cBrand), s.theme, hex(cBrand), hex(cBrand)))
+	s.help.SetText(fmt.Sprintf(" [%s::b]/[-::-]filter  [%s::b]s[-] system:%s  [%s::b]p[-] proto:%s  [%s::b]e/l[-] state:%s  [%s::b]t[-] theme:%s  [%s::b]r[-] refresh  [%s::b]q[-] quit",
+		hex(cBrand), hex(cBrand), onOff(s.hideSystem), hex(cBrand), labelOrAll(s.protoFilter), hex(cBrand), labelOrAll(s.stateFilter), hex(cBrand), s.theme, hex(cBrand), hex(cBrand)))
 	s.table.SetBackgroundColor(cPanel)
 	s.table.SetBordersColor(cLine).
 		SetSelectedStyle(tcell.StyleDefault.Foreground(cText).Background(cPanel2).Bold(true))
@@ -218,6 +235,20 @@ func (s *screenState) toggleTheme() {
 		s.theme = modeDark
 	}
 	s.applyTheme()
+	s.render(s.last)
+}
+
+func (s *screenState) cycleProto() {
+	s.protoFilter = map[string]string{"": "TCP", "TCP": "UDP", "UDP": ""}[s.protoFilter]
+	s.render(s.last)
+}
+
+func (s *screenState) toggleState(state string) {
+	if s.stateFilter == state {
+		s.stateFilter = ""
+	} else {
+		s.stateFilter = state
+	}
 	s.render(s.last)
 }
 
@@ -253,7 +284,7 @@ func (s *screenState) render(snap netmon.Snapshot) {
 	query := strings.ToLower(strings.TrimSpace(s.filter.GetText()))
 	row := 1
 	for _, e := range snap.Entries {
-		if query != "" && !strings.Contains(strings.ToLower(searchText(e)), query) {
+		if !s.matchEntry(e, query) {
 			continue
 		}
 		cells := []struct {
@@ -285,8 +316,11 @@ func (s *screenState) render(snap netmon.Snapshot) {
 
 	// Status row.
 	var st strings.Builder
-	st.WriteString(fmt.Sprintf("[%s::b]%4d[-::-] [%s]shown   [%s::b]%4d[-] [%s]total",
-		hex(cGood), row-1, hex(cMuted), hex(cMuted), len(snap.Entries), hex(cMuted)))
+	st.WriteString(fmt.Sprintf("[%s::b]%4d[-::-] [%s]shown   [%s::b]%4d[-] [%s]total   [%s]rx [%s::b]%s/s[-] [%s]tx [%s::b]%s/s[-]",
+		hex(cGood), row-1, hex(cMuted), hex(cMuted), len(snap.Entries), hex(cMuted), hex(cMuted), hex(cSignal), formatBytes(snap.Traffic.RxPerSec), hex(cMuted), hex(cWarn), formatBytes(snap.Traffic.TxPerSec)))
+	if filters := s.activeFilters(); filters != "" {
+		st.WriteString(fmt.Sprintf("   [%s]%s", hex(cMuted), filters))
+	}
 	if snap.Warning != "" {
 		st.WriteString(fmt.Sprintf("   [%s::b]![-::-] [%s]%s", hex(cWarn), hex(cWarn), snap.Warning))
 	}
@@ -294,8 +328,81 @@ func (s *screenState) render(snap netmon.Snapshot) {
 	s.paintTitle()
 }
 
+func (s *screenState) matchEntry(e netmon.Entry, query string) bool {
+	if s.hideSystem && isSystemProcess(e) {
+		return false
+	}
+	if s.protoFilter != "" && !strings.EqualFold(e.Protocol, s.protoFilter) {
+		return false
+	}
+	if s.stateFilter != "" && !strings.EqualFold(e.State, s.stateFilter) {
+		return false
+	}
+	return query == "" || strings.Contains(strings.ToLower(searchText(e)), query)
+}
+
+func (s *screenState) activeFilters() string {
+	filters := []string{}
+	if s.hideSystem {
+		filters = append(filters, "hide-system")
+	}
+	if s.protoFilter != "" {
+		filters = append(filters, strings.ToLower(s.protoFilter))
+	}
+	if s.stateFilter != "" {
+		filters = append(filters, s.stateFilter)
+	}
+	return strings.Join(filters, ",")
+}
+
 func searchText(e netmon.Entry) string {
 	return strings.Join([]string{e.Process, fmt.Sprint(e.PID), e.Protocol, e.Local, e.RemoteIP, e.Host, e.State}, " ")
+}
+
+func isSystemProcess(e netmon.Entry) bool {
+	name := strings.ToLower(e.Process)
+	if e.PID <= 4 || name == "system" || name == "unknown" || strings.HasPrefix(name, "pid-") {
+		return true
+	}
+	_, ok := systemProcesses[name]
+	return ok
+}
+
+var systemProcesses = map[string]struct{}{
+	"avahi-daemon": {}, "csrss.exe": {}, "dwm.exe": {}, "fontdrvhost.exe": {}, "kernel_task": {}, "launchd": {}, "lsass.exe": {}, "mdnsresponder": {}, "networkmanager": {}, "registry": {}, "searchindexer.exe": {}, "services.exe": {}, "smss.exe": {}, "spoolsv.exe": {}, "svchost.exe": {}, "systemd": {}, "systemd-resolved": {}, "wininit.exe": {}, "winlogon.exe": {},
+}
+
+func labelOrAll(s string) string {
+	if s == "" {
+		return "all"
+	}
+	return strings.ToLower(s)
+}
+
+func onOff(on bool) string {
+	if on {
+		return "hide"
+	}
+	return "show"
+}
+
+func formatBytes(n uint64) string {
+	if n < 1024 {
+		return fmt.Sprintf("%d B", n)
+	}
+	value := float64(n)
+	unit := "B"
+	for _, next := range []string{"KB", "MB", "GB", "TB"} {
+		value /= 1024
+		unit = next
+		if value < 1024 {
+			break
+		}
+	}
+	if value >= 10 {
+		return fmt.Sprintf("%.0f %s", value, unit)
+	}
+	return fmt.Sprintf("%.1f %s", value, unit)
 }
 
 func pad(s string, n int) string {
