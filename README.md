@@ -4,8 +4,6 @@ RedScope is a real-time terminal network monitor for Windows, Linux, and macOS.
 
 It shows which local process is talking to which remote IP/host.
 
-![screenshot placeholder](docs/screenshot.png)
-
 ## Features
 
 - Live TUI built with Go + [`tview`](https://github.com/rivo/tview)

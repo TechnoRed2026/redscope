@@ -4,8 +4,6 @@ RedScope یک مانیتور زنده شبکه داخل ترمینال است.
 
 نشان می‌دهد هر برنامه روی سیستم به کدام IP یا hostname وصل شده است.
 
-![جای اسکرین‌شات](docs/screenshot.png)
-
 ## قابلیت‌ها
 
 - رابط TUI با Go و [`tview`](https://github.com/rivo/tview)
