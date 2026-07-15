@@ -85,8 +85,13 @@ func (m *Monitor) Snapshot(ctx context.Context) Snapshot {
 			entry.Host = host
 		} else if lookups < m.hostLimit {
 			lookups++
-			entry.Host = reverse(ctx, remoteIP)
-			m.hosts[remoteIP] = entry.Host
+			m.hosts[remoteIP] = "" // reserve so only one goroutine resolves this IP
+			go func(ip string) {
+				host := reverse(ctx, ip)
+				m.mu.Lock()
+				m.hosts[ip] = host
+				m.mu.Unlock()
+			}(remoteIP)
 		}
 
 		entries = append(entries, entry)
@@ -110,17 +115,20 @@ func (m *Monitor) processName(pid int32) string {
 	if name, ok := m.names[pid]; ok {
 		return name
 	}
-	p, err := process.NewProcess(pid)
-	if err != nil {
-		m.names[pid] = "unknown"
-		return "unknown"
-	}
-	name, err := p.Name()
-	if err != nil || name == "" {
-		name = fmt.Sprintf("pid-%d", pid)
-	}
-	m.names[pid] = name
-	return name
+	placeholder := fmt.Sprintf("pid-%d", pid)
+	m.names[pid] = placeholder // reserve so only one goroutine resolves this PID
+	go func() {
+		name := placeholder
+		if p, err := process.NewProcess(pid); err != nil {
+			name = "unknown"
+		} else if n, err := p.Name(); err == nil && n != "" {
+			name = n
+		}
+		m.mu.Lock()
+		m.names[pid] = name
+		m.mu.Unlock()
+	}()
+	return placeholder
 }
 
 func (m *Monitor) traffic(ctx context.Context) (Traffic, string) {
@@ -150,7 +158,7 @@ func errText(err error) string {
 }
 
 func reverse(parent context.Context, ip string) string {
-	ctx, cancel := context.WithTimeout(parent, 80*time.Millisecond)
+	ctx, cancel := context.WithTimeout(parent, 500*time.Millisecond)
 	defer cancel()
 
 	names, err := stdnet.DefaultResolver.LookupAddr(ctx, ip)
