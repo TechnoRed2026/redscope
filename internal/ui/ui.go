@@ -92,10 +92,10 @@ func Run(ctx context.Context, monitor Monitor, refreshEvery time.Duration) error
 	table := tview.NewTable().
 		SetFixed(1, 0).
 		SetSelectable(true, false).
-		SetSeparator(tview.Borders.Vertical)
+		SetSeparator(' ')
 	filter := tview.NewInputField().
-		SetLabel(" filter: ").
-		SetPlaceholder("process, pid, host...")
+		SetLabel(" 🔍 ").
+		SetPlaceholder("type to filter — process, pid, host, state…")
 
 	root := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(title, 2, 0, false).
@@ -140,6 +140,16 @@ func Run(ctx context.Context, monitor Monitor, refreshEvery time.Duration) error
 		switch event.Rune() {
 		case 'q':
 			app.Stop()
+			return nil
+		case 'j':
+			return tcell.NewEventKey(tcell.KeyDown, 0, tcell.ModNone)
+		case 'k':
+			return tcell.NewEventKey(tcell.KeyUp, 0, tcell.ModNone)
+		case 'g':
+			table.Select(1, 0)
+			return nil
+		case 'G':
+			table.Select(table.GetRowCount()-1, 0)
 			return nil
 		case 'r':
 			refresh()
@@ -207,6 +217,11 @@ type screenState struct {
 
 func hex(c tcell.Color) string { return fmt.Sprintf("#%06x", c.Hex()) }
 
+// key renders a keycap-style hint like [ q ] with brand background.
+func key(k string) string {
+	return fmt.Sprintf("[%s:%s:b] %s [-:-:-]", hex(cBg), hex(cBrand), k)
+}
+
 func (s *screenState) applyTheme() {
 	applyPalette(s.theme)
 	s.root.SetBackgroundColor(cBg)
@@ -216,8 +231,10 @@ func (s *screenState) applyTheme() {
 	s.status.SetBackgroundColor(cBg)
 	s.help.SetTextColor(cText)
 	s.help.SetBackgroundColor(cBg)
-	s.help.SetText(fmt.Sprintf(" [%s::b]/[-::-]filter  [%s::b]s[-] system:%s  [%s::b]p[-] proto:%s  [%s::b]e/l[-] state:%s  [%s::b]t[-] theme:%s  [%s::b]r[-] refresh  [%s::b]q[-] quit",
-		hex(cBrand), hex(cBrand), onOff(s.hideSystem), hex(cBrand), labelOrAll(s.protoFilter), hex(cBrand), labelOrAll(s.stateFilter), hex(cBrand), s.theme, hex(cBrand), hex(cBrand)))
+	m := hex(cMuted)
+	s.help.SetText(fmt.Sprintf(" %s[%s]filter %s[%s]system:%s %s[%s]proto:%s %s[%s]state:%s %s[%s]theme %s[%s]refresh %s[%s]quit",
+		key("/"), m, key("s"), m, onOff(s.hideSystem), key("p"), m, labelOrAll(s.protoFilter),
+		key("e l"), m, labelOrAll(s.stateFilter), key("t"), m, key("r"), m, key("q"), m))
 	s.table.SetBackgroundColor(cPanel)
 	s.table.SetBordersColor(cLine).
 		SetSelectedStyle(tcell.StyleDefault.Foreground(cText).Background(cPanel2).Bold(true))
@@ -254,11 +271,11 @@ func (s *screenState) toggleState(state string) {
 
 func (s *screenState) paintTitle() {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf(" [%s::b]» RedScope[-::-]  [%s]network radar · %s", hex(cBrand), hex(cMuted), s.theme))
+	b.WriteString(fmt.Sprintf(" [%s::b]◉ RedScope[-::-]  [%s]network radar · %s", hex(cBrand), hex(cMuted), s.theme))
 	if s.busy {
-		b.WriteString(fmt.Sprintf("  [%s::b]●[%s] live", hex(cSignal), hex(cMuted)))
+		b.WriteString(fmt.Sprintf("  [%s::b]⟳[%s] scanning…", hex(cSignal), hex(cMuted)))
 	} else {
-		b.WriteString(fmt.Sprintf("  [%s]· idle", hex(cMuted)))
+		b.WriteString(fmt.Sprintf("  [%s::b]●[%s] live", hex(cGood), hex(cMuted)))
 	}
 	s.title.SetText(b.String())
 }
@@ -312,6 +329,17 @@ func (s *screenState) render(snap netmon.Snapshot) {
 					SetMaxWidth(widths[col]))
 		}
 		row++
+	}
+
+	if row == 1 {
+		msg := "  no connections match — press Esc to clear filters"
+		if len(snap.Entries) == 0 {
+			msg = "  scanning for connections…"
+		}
+		s.table.SetCell(1, 0, tview.NewTableCell(msg).
+			SetTextColor(cMuted).
+			SetBackgroundColor(cPanel).
+			SetSelectable(false))
 	}
 
 	// Status row.
